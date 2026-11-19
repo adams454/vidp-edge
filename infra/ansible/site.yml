@@ -1,0 +1,23 @@
+---
+- name: Préparer l'archive du dépôt (poste de contrôle)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    repo: "{{ playbook_dir }}/../.."
+  tasks:
+    - name: Archive du dépôt (sans vidéos, résultats ni secrets)
+      ansible.builtin.command:
+        argv: [tar, czf, /tmp/vidp-bundle.tgz, --exclude=__pycache__, --exclude=.env, --exclude=spool,
+               --exclude=results, -C, "{{ repo }}", Dockerfile, requirements.txt, src, cloud, edge, scripts, ebpf]
+      changed_when: true
+
+- name: Cloud (agrégation, stockage, page publique)
+  hosts: cloud
+  become: true
+  roles: [docker, cloud]
+
+- name: Edge (pipeline 4 conteneurs, tampon, monitoring)
+  hosts: edge
+  become: true
+  roles: [docker, edge]

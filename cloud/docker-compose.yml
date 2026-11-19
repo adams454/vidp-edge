@@ -1,0 +1,91 @@
+name: vidp-cloud
+# Cloud (VM EC2, ou toute VM Linux en attendant l'accès AWS) :
+#   ingest  :8443  API d'ingestion TLS (identité de nœud HMAC, idempotence, reprise de téléversement)
+#   worker         « Video Production » : traite les vidéos déportées (étages restants)
+#   public         API lecture seule (réseau interne uniquement)
+#   web     :80    « Video Viewer Page » Apache2 : page publique + proxy vers l'API publique
+# Stockage : STORAGE=aws (S3 + DynamoDB, rôle IAM de l'instance) ou STORAGE=local (SQLite + disque).
+
+x-app: &app
+  image: ${REGISTRY:-vidp}/vidp:${TAG:-latest}
+  env_file: [.env]
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  volumes: ["./data:/data"]
+
+services:
+  ingest:
+    <<: *app
+    build: { context: .., dockerfile: Dockerfile }
+    container_name: vidp-ingest
+    entrypoint: ["python", "-m", "uvicorn", "--factory"]
+    command: ["vidp.cloud_app:ingest", "--host", "0.0.0.0", "--port", "8443",
+              "--ssl-keyfile", "/certs/key.pem", "--ssl-certfile", "/certs/cert.pem", "--log-level", "warning"]
+    ports: ["8443:8443"]
+    volumes: ["./data:/data", "./certs:/certs:ro"]
+
+  worker:
+    <<: *app
+    container_name: vidp-worker
+    command: ["cloud-worker"]
+    environment: { METRICS_PORT: "9200", WHISPER_THREADS: "2" }
+
+  public:
+    <<: *app
+    container_name: vidp-public
+    entrypoint: ["python", "-m", "uvicorn", "--factory"]
+    command: ["vidp.cloud_app:public", "--host", "0.0.0.0", "--port", "8080", "--log-level", "warning"]
+    env_file: []        # l'API publique ne reçoit PAS le secret maître
+    environment:
+      DATA_DIR: /data
+      STORAGE: ${STORAGE:-local}
+      S3_BUCKET: ${S3_BUCKET:-}
+      DDB_TABLE: ${DDB_TABLE:-}
+      AWS_REGION: ${AWS_REGION:-eu-west-3}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      DDB_ENDPOINT: ${DDB_ENDPOINT:-}
+    expose: ["8080"]
+
+  web:
+    image: httpd:2.4.62-alpine
+    container_name: vidp-web
+    volumes:
+      - ./web/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - ../src/vidp/web:/usr/local/apache2/htdocs:ro
+    ports: ["80:80"]
+    depends_on: [public]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "prom-data:/prometheus"]
+    ports: ["${CLOUD_PROM_PORT:-9090}:9090"]     # ouvert seulement aux IP Edge (groupe de sécurité / pare-feu)
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  node:
+    image: prom/node-exporter:v1.8.2
+    command: ["--path.rootfs=/host"]
+    pid: host
+    network_mode: host
+    volumes: ["/:/host:ro,rslave"]
+    restart: unless-stopped
+    read_only: true
+    profiles: ["standalone"]        # désactivé si le Cloud partage la machine de l'Edge (port 9100 déjà pris)
+
+  # ------- émulation S3 + DynamoDB pour tester STORAGE=aws SANS compte AWS (profil « awslocal »)
+  minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    command: ["server", "/data"]
+    environment: { MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID:-vidplocal}", MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY:-vidplocal-secret}" }
+    profiles: ["awslocal"]
+  dynamodb:
+    image: amazon/dynamodb-local:2.5.2
+    profiles: ["awslocal"]
+
+volumes:
+  prom-data:

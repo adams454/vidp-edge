@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest
+httpx
+matplotlib
+moto[s3,dynamodb]>=5

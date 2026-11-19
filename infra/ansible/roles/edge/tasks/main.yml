@@ -1,0 +1,71 @@
+---
+- name: Répertoires
+  ansible.builtin.file: { path: "{{ item }}", state: directory, mode: "0755" }
+  loop: [/opt/vidp, /opt/vidp/edge/certs]
+
+- name: Déployer le dépôt
+  ansible.builtin.unarchive: { src: /tmp/vidp-bundle.tgz, dest: /opt/vidp }
+
+- name: Répertoires d'état (propriétaire = utilisateur non-root des conteneurs)
+  ansible.builtin.file: { path: "/opt/vidp/{{ item }}", state: directory, owner: "10001", group: "10001", mode: "0750" }
+  loop: [edge/spool, edge/results, edge/textfile, data/videos, data/inbox]
+
+- name: Autorité de confiance du Cloud (épinglage du certificat)
+  ansible.builtin.copy: { content: "{{ tls_cert_pem }}", dest: /opt/vidp/edge/certs/ca.pem, owner: "10001", mode: "0644" }
+  no_log: true
+
+- name: Jeton d'identité du nœud (HMAC, calculé sur le poste de contrôle ; le secret maître ne quitte pas celui-ci)
+  ansible.builtin.command:
+    argv: [python3, "{{ playbook_dir }}/../../scripts/mint_token.py", "{{ node_id }}"]
+  environment: { CLOUD_MASTER_SECRET: "{{ cloud_master_secret }}" }
+  delegate_to: localhost
+  become: false
+  register: tok
+  changed_when: false
+  no_log: true
+
+- name: Configuration Edge (0600) ; le jeton est isolé dans .env.secret, lu par le seul téléverseur
+  ansible.builtin.template: { src: "{{ item.src }}", dest: "/opt/vidp/edge/{{ item.dest }}", mode: "0600" }
+  loop: [{ src: env.j2, dest: .env }, { src: secret.j2, dest: .env.secret }]
+  vars: { node_token: "{{ tok.stdout }}" }
+  no_log: true
+
+- name: Construire les images (ou récupérer l'image pré-publiée)
+  ansible.builtin.shell: |
+    {% if vidp_registry is defined %}docker compose pull downscale && docker compose build wan
+    {% else %}docker compose build downscale wan{% endif %}
+  args: { chdir: /opt/vidp/edge }
+  changed_when: true
+
+- name: Vidéos de test avec vérité terrain (une seule fois)
+  ansible.builtin.command:
+    argv: [docker, run, --rm, --user, "10001", -v, "/opt/vidp/data/videos:/out",
+           "{{ vidp_registry | default('vidp') }}/vidp:{{ vidp_tag | default('latest') }}",
+           synth, --out, /out, --animals, /app/animals, --count, "{{ video_count | default(8) }}",
+           --duration, "{{ video_seconds | default(20) }}"]
+  args: { creates: "/opt/vidp/data/videos/vid{{ '%02d' | format((video_count | default(8) | int) - 1) }}.mp4" }
+
+- name: Démarrer la pile Edge (4 étages, tampon, monitoring)
+  ansible.builtin.command: docker compose up -d --no-build --remove-orphans
+  args: { chdir: /opt/vidp/edge }
+  changed_when: true
+
+- name: Grafana joignable
+  ansible.builtin.uri: { url: "http://127.0.0.1:3000/api/health", status_code: 200 }
+  register: g
+  until: g.status == 200
+  retries: 40
+  delay: 3
+
+- name: Connexion Edge -> Cloud vérifiée (TLS épinglé + jeton) — sinon voir EDGE_CIDRS / CLOUD_FIREWALL
+  ansible.builtin.uri: { url: "http://127.0.0.1:9101/metrics", return_content: true }
+  register: m
+  until: m.content is search('(?m)^uploader_wan_up 1')
+  retries: 30
+  delay: 3
+
+- name: Régime nominal pour la démo (générateur de charge continu)
+  ansible.builtin.command: docker compose --profile load up -d --force-recreate feeder
+  args: { chdir: /opt/vidp/edge }
+  when: vidp_load | default(false) | bool
+  changed_when: true

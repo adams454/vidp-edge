@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VidP — vidéos traitées</title>
+<style>
+:root{--bg:#0f1722;--panel:#16233a;--line:#243b5e;--txt:#e6edf3;--mut:#9fb3c8;--acc:#6cb0ff;--ok:#1f9d55;--run:#b7791f}
+*{box-sizing:border-box}
+body{font:15px system-ui,sans-serif;margin:0;background:var(--bg);color:var(--txt)}
+header{padding:16px 24px;background:var(--panel);border-bottom:2px solid #2f6fdb}
+h1{margin:0;font-size:20px}.sub{color:var(--mut);font-size:13px;margin-top:4px}
+h2{font-size:16px;margin:18px 24px 8px}
+.stats{display:flex;gap:12px;padding:16px 24px 0;flex-wrap:wrap}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 16px;min-width:120px}
+.card b{display:block;font-size:22px;color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;padding:0 24px 24px}
+.v{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.v img,.v video{width:100%;display:block;background:#000;aspect-ratio:16/9;object-fit:contain}
+.v .b{padding:10px 12px}.v .n{font-weight:600;word-break:break-all}
+.tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:var(--line);margin:2px 4px 2px 0}
+.done{background:var(--ok)}.run{background:var(--run)}
+.subs{color:var(--mut);font-size:13px;max-height:5.5em;overflow:auto;margin-top:6px}
+table{border-collapse:collapse;width:calc(100% - 48px);margin:0 24px}
+td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+@media (max-width:600px){.grid{padding:0 12px 12px}.stats,h2{margin-left:12px;margin-right:12px;padding-left:0}table{margin:0 12px;width:calc(100% - 24px)}}
+</style>
+</head>
+<body>
+<header><h1>VidP — pipeline vidéo hybride Edge–Cloud</h1>
+<div class="sub">Downscale → LangIdent → Subtitle → Animal detect · traité sur l'Edge ou dans le Cloud · actualisation toutes les 3 s</div></header>
+<div class="stats" id="stats"></div>
+<h2>En cours de traitement</h2>
+<table><thead><tr><th>Vidéo</th><th>État</th><th>Arrivée</th></tr></thead><tbody id="running"></tbody></table>
+<h2>Vidéos traitées</h2>
+<div class="grid" id="done"></div>
+<script>
+const q=new URLSearchParams(location.search).get('run_id');const sfx=q?'?run_id='+encodeURIComponent(q):'';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const STATE={edge_processing:'traitement Edge',uploading:'envoi vers le Cloud',cloud_processing:'traitement Cloud',receiving:'réception'};
+const hhmm=t=>t?new Date(t*1000).toLocaleTimeString('fr-FR'):'—';
+function card(v){
+  const m=v.media||{};let media='';
+  const clip=Object.keys(m).filter(k=>k.startsWith('clip')).sort()[0];
+  if(clip){media=`<video controls preload="none" poster="${m.thumb?'/media/'+esc(m.thumb.key):''}" src="/media/${esc(m[clip].key)}">${m.subs?`<track default kind="subtitles" srclang="${esc(v.lang||'und')}" src="/media/${esc(m.subs.key)}">`:''}</video>`}
+  else if(m.thumb){media=`<img alt="vignette" src="/media/${esc(m.thumb.key)}">`}
+  else{media='<img alt="">'}
+  const an=(v.animals||[]).map(a=>`<span class="tag">${esc(a.label_fr||a.label)} ${a.t0.toFixed(1)}–${a.t1.toFixed(1)} s</span>`).join('')||'<span class="tag">aucun animal</span>';
+  const subs=(v.subtitles||[]).map(s=>esc(s.text)).join(' ');
+  const lat=v.published_ts&&v.t0?(v.published_ts-v.t0).toFixed(1)+' s':'—';
+  return `<div class="v">${media}<div class="b"><div class="n">${esc(v.name)}</div>
+   <span class="tag done">traité : ${esc(v.processed_at)}</span><span class="tag">langue : ${esc(v.lang||'pas de voix')}</span><span class="tag">latence ${lat}</span><br>${an}
+   ${subs?`<div class="subs">${subs}</div>`:''}</div></div>`}
+async function load(){
+ try{
+  const [vs,s]=await Promise.all([fetch('/api/videos'+sfx).then(r=>r.json()),fetch('/api/stats'+sfx).then(r=>r.json())]);
+  document.getElementById('stats').innerHTML=`<div class=card>Vidéos<b>${s.videos}</b></div><div class=card>Traitées<b>${s.by_state.done||0}</b></div>`+
+   Object.entries(s.animals).map(([k,n])=>`<div class=card>${esc(k)}<b>${n}</b></div>`).join('')+
+   `<div class=card>Extraits reçus<b>${(s.extract_bytes/1e6).toFixed(1)} Mo</b></div>`;
+  const run=vs.filter(v=>v.state!=='done');
+  document.getElementById('running').innerHTML=run.slice(0,30).map(v=>`<tr><td>${esc(v.name||v.video_id)}</td><td><span class="tag run">${esc(STATE[v.state]||v.state)}</span></td><td>${hhmm(v.t0)}</td></tr>`).join('')||'<tr><td colspan=3>—</td></tr>';
+  document.getElementById('done').innerHTML=vs.filter(v=>v.state==='done').slice(0,60).map(card).join('');
+ }catch(e){console.error(e)}
+}
+load();setInterval(load,3000);
+</script>
+</body>
+</html>

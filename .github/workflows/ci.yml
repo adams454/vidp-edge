@@ -1,0 +1,40 @@
+name: ci
+on: { push: { branches: [main] }, pull_request: {} }
+permissions: { contents: read, packages: write, id-token: write }
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      - run: pip install -r requirements-dev.txt
+      - uses: actions/cache@v4
+        with: { path: "models\ndata/animals", key: "models-${{ hashFiles('src/vidp/models.py') }}" }
+      - run: PYTHONPATH=src python -m vidp fetch-models --dir models --animals data/animals   # empreintes vérifiées
+      - run: PYTHONPATH=src MODELS_DIR=models ANIMALS_DIR=data/animals pytest -q --junitxml=test-report.xml tests
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: test-report, path: test-report.xml }
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository }}/vidp:latest
+      - uses: aquasecurity/trivy-action@0.24.0       # analyse de vulnérabilités
+        with: { image-ref: "ghcr.io/${{ github.repository }}/vidp:latest", severity: "CRITICAL,HIGH", exit-code: "1" }
+      - uses: sigstore/cosign-installer@v3
+      - run: cosign sign --yes ghcr.io/${{ github.repository }}/vidp@${{ steps.build.outputs.digest }}   # signature sans clé (OIDC)

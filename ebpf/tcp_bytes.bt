@@ -1,0 +1,6 @@
+#!/usr/bin/env bpftrace
+/* Octets TCP émis par processus (kprobe tcp_sendmsg) : observation noyau indépendante des compteurs
+   applicatifs, pour recouper les octets WAN. Nécessite root + bpftrace + en-têtes noyau.
+   Usage : sudo bpftrace ebpf/tcp_bytes.bt | ebpf/to_textfile.sh */
+kprobe:tcp_sendmsg { @tx[comm] = sum(arg2); @calls[comm] = count(); }
+interval:s:5 { print(@tx); print(@calls); clear(@tx); clear(@calls); }

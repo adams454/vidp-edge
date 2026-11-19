@@ -1,0 +1,13 @@
+global: { scrape_interval: 5s, evaluation_interval: 5s }
+scrape_configs:
+  - job_name: stages
+    static_configs:
+      - targets: ["downscale:9111", "langident:9112", "subtitle:9113", "animal:9114"]
+  - job_name: uploader
+    static_configs: [{ targets: ["wan:9101"] }]   # le téléverseur partage l'espace de noms réseau de « wan »
+  - job_name: energy
+    static_configs: [{ targets: ["energy:9102"] }]
+  - job_name: cadvisor
+    static_configs: [{ targets: ["cadvisor:8080"] }]
+  - job_name: node
+    static_configs: [{ targets: ["host.docker.internal:9100"] }]

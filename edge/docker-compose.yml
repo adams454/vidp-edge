@@ -1,0 +1,160 @@
+name: vidp-edge
+# Nœud Edge : pipeline VidP en 4 conteneurs en série (Downscale -> LangIdent -> Subtitle -> Animal detect)
+# + tampon/téléverseur + générateur de charge + plan de mesure (Prometheus, Grafana, cAdvisor, node-exporter,
+# énergie RAPL). Les étages communiquent par une file de travaux SQLite durable dans ./spool.
+
+x-app: &app
+  image: ${REGISTRY:-vidp}/vidp:${TAG:-latest}
+  env_file:
+    - .env
+    - { path: .env.run, required: false }   # surcharge par scénario (run_scenarios.py)
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+x-stage: &stage
+  <<: *app
+  volumes:
+    - ./spool:/spool
+    - ./results:/results
+    - ../data/inbox:/data/inbox
+  environment: &stage_env
+    SPOOL_DIR: /spool
+    RESULTS_DIR: /results
+    INBOX_DIR: /data/inbox
+    WHISPER_THREADS: "1"
+
+services:
+  # ---------------------------------------------------------------- pipeline (4 conteneurs en série)
+  downscale:
+    <<: *stage
+    build: { context: .., dockerfile: Dockerfile }    # construit l'image commune une fois
+    container_name: vidp-downscale
+    command: ["stage", "downscale"]
+    environment: { <<: *stage_env, METRICS_PORT: "9111" }
+    ports: ["127.0.0.1:9111:9111"]
+    cpus: 1.0
+    mem_limit: 512m
+
+  langident:
+    <<: *stage
+    container_name: vidp-langident
+    command: ["stage", "langident"]
+    environment: { <<: *stage_env, METRICS_PORT: "9112" }
+    ports: ["127.0.0.1:9112:9112"]
+    cpus: 1.0
+    mem_limit: 768m
+    depends_on: [downscale]
+
+  subtitle:
+    <<: *stage
+    container_name: vidp-subtitle
+    command: ["stage", "subtitle"]
+    environment: { <<: *stage_env, METRICS_PORT: "9113" }
+    ports: ["127.0.0.1:9113:9113"]
+    cpus: 1.0
+    mem_limit: 768m
+    depends_on: [downscale]
+
+  animal:
+    <<: *stage
+    container_name: vidp-animal
+    command: ["stage", "animal"]
+    environment: { <<: *stage_env, METRICS_PORT: "9114" }
+    ports: ["127.0.0.1:9114:9114"]
+    cpus: 1.0
+    mem_limit: 512m
+    depends_on: [downscale]
+
+  # ---------------------------------------------------------------- tampon Edge -> WAN -> Cloud
+  # « wan » détient l'espace de noms réseau du téléverseur : c'est ici que tc/netem dégrade ou coupe le WAN.
+  wan:
+    build: ./wan
+    image: vidp-wan:latest
+    container_name: vidp-wan
+    cap_add: [NET_ADMIN]
+    restart: unless-stopped
+    ports: ["127.0.0.1:9101:9101"]
+
+  uploader:
+    <<: *app
+    container_name: vidp-uploader
+    command: ["uploader"]
+    env_file:                    # seul conteneur qui reçoit le jeton d'identité du nœud
+      - .env
+      - .env.secret
+      - { path: .env.run, required: false }
+    network_mode: "service:wan"
+    environment: { METRICS_PORT: "9101", SPOOL_DIR: /spool, RESULTS_DIR: /results }
+    volumes:
+      - ./spool:/spool
+      - ./results:/results
+      - ./certs:/certs:ro
+    depends_on: [wan]
+
+  # ---------------------------------------------------------------- générateur de charge (vidéos -> magasin local)
+  feeder:
+    <<: *app
+    container_name: vidp-feeder
+    command: ["feeder"]
+    restart: "no"
+    environment: { LIBRARY_DIR: /data/videos, INBOX_DIR: /data/inbox, RESULTS_DIR: /results, FEEDER_STAY: "0" }
+    volumes:
+      - ../data/videos:/data/videos:ro
+      - ../data/inbox:/data/inbox
+      - ./results:/results
+    profiles: ["load"]          # lancé à la demande : run_scenarios.py ou « docker compose --profile load up feeder »
+
+  # ---------------------------------------------------------------- plan de mesure
+  energy:
+    <<: *app
+    container_name: vidp-energy
+    command: ["energy-exporter"]
+    environment: { METRICS_PORT: "9102", RAPL_DIR: /sys/class/powercap }
+    ports: ["127.0.0.1:9102:9102"]
+    volumes: ["/sys/class/powercap:/sys/class/powercap:ro"]
+
+  node:
+    image: prom/node-exporter:v1.8.2
+    command: ["--path.rootfs=/host", "--collector.textfile.directory=/textfile", "--web.listen-address=:9100"]
+    pid: host
+    network_mode: host
+    volumes: ["/:/host:ro,rslave", "./textfile:/textfile:ro"]
+    restart: unless-stopped
+    read_only: true
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    devices: ["/dev/kmsg"]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro", "prom-data:/prometheus"]
+    ports: ["127.0.0.1:9090:9090"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD manquant dans .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      CLOUD_PROM_URL: ${CLOUD_PROM_URL:-http://127.0.0.1:9091}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+volumes:
+  prom-data:
