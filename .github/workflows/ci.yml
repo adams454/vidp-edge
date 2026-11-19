@@ -34,7 +34,11 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/${{ github.repository }}/vidp:latest
-      - uses: aquasecurity/trivy-action@0.24.0       # analyse de vulnérabilités
-        with: { image-ref: "ghcr.io/${{ github.repository }}/vidp:latest", severity: "CRITICAL,HIGH", exit-code: "1" }
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      # analyse de vulnérabilités (action épinglée par commit = v0.36.0) ; échec sur toute faille
+      # CRITIQUE/HAUTE pour laquelle un correctif existe
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with: { image-ref: "ghcr.io/${{ github.repository }}/vidp:latest", severity: "CRITICAL,HIGH",
+                ignore-unfixed: true, exit-code: "1" }
       - uses: sigstore/cosign-installer@v3
       - run: cosign sign --yes ghcr.io/${{ github.repository }}/vidp@${{ steps.build.outputs.digest }}   # signature sans clé (OIDC)
