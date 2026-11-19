@@ -18,7 +18,7 @@ Prérequis : Python 3.10+, `ffmpeg` dans le PATH, `espeak-ng` pour les voix (sin
 ```bash
 cd vidp-edge
 pip install -r requirements-dev.txt
-make models          # télécharge Whisper tiny + MobileNet-SSD + 3 photos, vérifie les SHA-256
+make models          # télécharge Whisper tiny/base + MobileNet-SSD + 3 photos, vérifie les SHA-256
 make videos          # 8 vidéos de test (20 s) + vérité terrain data/videos/vidNN.gt.json  (~4 min)
 make test            # tous les tests, dont bout en bout avec coupure du Cloud (~10 min)
 make smoke           # 3 modes × (nominal, coupure) en processus locaux

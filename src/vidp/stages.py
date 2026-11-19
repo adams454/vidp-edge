@@ -1,8 +1,8 @@
 """Les quatre étages du pipeline VidP (énoncé) — fonctions pures, utilisées par l'Edge ET par le Cloud.
 
     1. Downscale     : réduction de résolution (ffmpeg, H.264 + audio AAC mono)
-    2. LangIdent     : langue parlée (Whisper « tiny », CTranslate2 int8, détection de voix VAD)
-    3. Subtitle      : sous-titres WebVTT (même modèle, langue imposée par l'étage 2)
+    2. LangIdent     : langue parlée (Whisper « base », CTranslate2 int8, détection de voix VAD)
+    3. Subtitle      : sous-titres WebVTT (Whisper « tiny », plus sobre ; langue imposée par l'étage 2)
     4. Animal detect : animaux (MobileNet-SSD VOC via OpenCV DNN : oiseau, chat, vache, chien, cheval, mouton)
 
 Puis `make_outputs` produit les « extraits utiles » : vignette annotée + courts extraits autour des animaux.
@@ -57,20 +57,21 @@ def downscale(src: str, dst: str, height: int = 360) -> dict:
 
 
 # ---------------------------------------------------------------- 2-3. Whisper (langue + sous-titres)
-_whisper = None
+_whisper = {}
 _wlock = threading.Lock()
 
 
-def whisper(cfg: ModelCfg):
-    global _whisper
+def whisper(cfg: ModelCfg, name: str | None = None):
+    """Modèle Whisper chargé une fois par processus (chaque étage est un conteneur : un seul modèle chacun)."""
+    name = name or cfg.whisper
     with _wlock:
-        if _whisper is None:
+        if name not in _whisper:
             from faster_whisper import WhisperModel
-            local = os.path.join(cfg.models_dir, f"whisper-{cfg.whisper}")
-            _whisper = WhisperModel(local if os.path.isdir(local) else cfg.whisper, device="cpu",
-                                    compute_type="int8", cpu_threads=cfg.whisper_threads,
-                                    download_root=cfg.models_dir)
-        return _whisper
+            local = os.path.join(cfg.models_dir, f"whisper-{name}")
+            _whisper[name] = WhisperModel(local if os.path.isdir(local) else name, device="cpu",
+                                          compute_type="int8", cpu_threads=cfg.whisper_threads,
+                                          download_root=cfg.models_dir)
+        return _whisper[name]
 
 
 def load_audio(path: str):
@@ -91,7 +92,7 @@ VAD = {"min_silence_duration_ms": 500}
 def langident(audio, cfg: ModelCfg) -> dict:
     if audio is None or len(audio) < 16000 * 0.5:
         return {"lang": None, "lang_prob": 0.0, "speech_s": 0.0}
-    _, info = whisper(cfg).transcribe(audio, beam_size=1, vad_filter=True, vad_parameters=VAD)
+    _, info = whisper(cfg, cfg.langid_model).transcribe(audio, beam_size=1, vad_filter=True, vad_parameters=VAD)
     speech = float(getattr(info, "duration_after_vad", info.duration) or 0)
     if speech < 0.5:
         return {"lang": None, "lang_prob": 0.0, "speech_s": round(speech, 2)}

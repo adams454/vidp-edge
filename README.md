@@ -65,8 +65,9 @@ bout en bout dans les 3 modes avec coupure brutale du Cloud (0 perte, 0 doublon,
 
 ## Limites connues
 - Vidéos de test synthétiques (photos d'animaux incrustées, voix de synthèse) : reproductibles et à vérité terrain,
-  mais plus simples que des scènes réelles. MobileNet-SSD ne connaît que 6 animaux (VOC) ; Whisper *tiny* est
-  sobre mais moins précis que les modèles plus gros (compromis énergie).
+  mais plus simples que des scènes réelles. MobileNet-SSD ne connaît que 6 animaux (VOC). LangIdent utilise Whisper *base*
+  (Whisper *tiny* confondait espagnol/français et allemand/latin sur les voix de synthèse espeak-ng) ; Subtitle
+  garde *tiny*, plus sobre (compromis énergie/qualité, mesurable par le WER).
 - Une seule VM Cloud (pas de Load Balancer) ; DynamoDB lu par Scan (suffisant au volume du projet).
 - Jeton de nœud statique (pas d'anti-rejeu) ; certificat auto-signé épinglé.
 - En `cloud_only`, une coupure très longue peut dépasser le quota disque (les sources ne sont jamais évincées).

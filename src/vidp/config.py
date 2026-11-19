@@ -22,7 +22,8 @@ STAGES = ["downscale", "langident", "subtitle", "animal"]
 @dataclass
 class ModelCfg:
     models_dir: str = field(default_factory=lambda: _s("MODELS_DIR", "/models"))
-    whisper: str = field(default_factory=lambda: _s("WHISPER_MODEL", "tiny"))       # tiny = sobre en énergie
+    whisper: str = field(default_factory=lambda: _s("WHISPER_MODEL", "tiny"))       # Subtitle : tiny = sobre
+    langid_model: str = field(default_factory=lambda: _s("LANGID_MODEL", "base"))   # LangIdent : base = fiable
     whisper_threads: int = field(default_factory=lambda: _i("WHISPER_THREADS", 1))
     animal_fps: float = field(default_factory=lambda: _f("ANIMAL_FPS", 2.0))           # trames analysées par seconde
     animal_conf: float = field(default_factory=lambda: _f("ANIMAL_CONF", 0.45))

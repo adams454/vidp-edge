@@ -4,7 +4,7 @@
 | Énoncé (VidP + VidP-Edge) | Réalisation |
 |---|---|
 | Vidéos stockées en local, traitées par un ensemble de conteneurs | magasin local `data/inbox` ; **4 conteneurs en série** `downscale → langident → subtitle → animal` (Docker Compose — « Kubernetes ou autre ») |
-| Downscale / LangIdent / Subtitle / Animal detect | ffmpeg (H.264 360p) / Whisper *tiny* int8 + VAD / Whisper (WebVTT) / MobileNet-SSD VOC (OpenCV DNN) |
+| Downscale / LangIdent / Subtitle / Animal detect | ffmpeg (H.264 360p) / Whisper *base* int8 + VAD / Whisper *tiny* (WebVTT) / MobileNet-SSD VOC (OpenCV DNN, 2 tuiles carrées) |
 | Buffer Edge, mode déconnecté | file de travaux + tampon d'envoi SQLite/WAL durables (`spool/`), quota disque, éviction par intérêt |
 | Décision locale : traiter sur l'Edge, envoyer les métadonnées, seulement les extraits utiles | politique `policy.py` : placement Edge/Cloud par ETA, extraits autour des animaux seulement, qualité adaptée au débit |
 | Métadonnées + vidéos agrégées par des VMs (EC2) qui enregistrent sur S3 | API d'ingestion + worker « Video Production » ; S3 (sources, extraits, vignettes, sous-titres) + DynamoDB (métadonnées) ; ou SQLite + disque (« BD simple ») sans AWS |

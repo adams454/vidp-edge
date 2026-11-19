@@ -13,6 +13,7 @@ ANIMALS = os.environ.get("ANIMALS_DIR", os.path.join(ROOT, "data", "animals"))
 
 def have_models():
     return os.path.exists(os.path.join(MODELS, "whisper-tiny", "model.bin")) and \
+        os.path.exists(os.path.join(MODELS, "whisper-base", "model.bin")) and \
         os.path.exists(os.path.join(MODELS, "MobileNetSSD_deploy.caffemodel"))
 
 

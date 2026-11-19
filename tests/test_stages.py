@@ -1,4 +1,4 @@
-"""Les 4 étages réels (ffmpeg, Whisper tiny, MobileNet-SSD) sur des vidéos de test à vérité terrain."""
+"""Les 4 étages réels (ffmpeg, Whisper base/tiny, MobileNet-SSD) sur des vidéos de test à vérité terrain."""
 import glob
 import json
 import os
