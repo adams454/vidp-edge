@@ -23,10 +23,14 @@ def run_all(path, tmp_path):
 
 def test_pipeline_matches_ground_truth(videos, tmp_path):
     ok_lang = ok_animal = n_lang = n_animal = 0
+    seen = []
     for p in sorted(glob.glob(os.path.join(videos, "*.mp4"))):
         gt = json.load(open(p[:-4] + ".gt.json", encoding="utf-8"))
         job = run_all(p, tmp_path / os.path.basename(p))
         d = job["data"]
+        seen.append((os.path.basename(p), gt["lang"], d.get("lang"), d.get("lang_prob"),
+                     [a["label"] for a in gt["animals"]], [a["label"] for a in d["animals"]]))
+        print("GT/détecté :", seen[-1])
         assert d["height"] == 360 and d["downscaled_bytes"] < d["src_bytes"]       # Downscale réduit vraiment
         if gt["lang"]:
             n_lang += 1
@@ -43,5 +47,5 @@ def test_pipeline_matches_ground_truth(videos, tmp_path):
         files, clips = pipeline.build_outputs(job, str(tmp_path / os.path.basename(p)), "full")
         kinds = {k for k, _, _ in files}
         assert "thumb" in kinds and (bool(clips) == bool(d["animals"]))
-    assert n_lang and ok_lang >= n_lang - 1, f"langue : {ok_lang}/{n_lang}"
-    assert n_animal and ok_animal >= n_animal - 1, f"animaux : {ok_animal}/{n_animal}"
+    assert n_lang and ok_lang >= n_lang - 1, f"langue : {ok_lang}/{n_lang} {seen}"
+    assert n_animal and ok_animal >= n_animal - 1, f"animaux : {ok_animal}/{n_animal} {seen}"
